@@ -510,6 +510,9 @@ static int ept_idle_walk_hva_range(struct ept_idle_ctrl *eic,
 	return ret;
 }
 
+static ssize_t mm_idle_read(struct file *file, char *buf,
+			    size_t count, loff_t *ppos);
+
 static ssize_t ept_idle_read(struct file *file, char *buf,
 			     size_t count, loff_t *ppos)
 {
@@ -612,6 +615,207 @@ static int ept_idle_release(struct inode *inode, struct file *file)
 
 out:
 	module_put(THIS_MODULE);
+	return ret;
+}
+
+static int mm_idle_pte_range(struct ept_idle_ctrl *eic, pmd_t *pmd,
+			     unsigned long addr, unsigned long next)
+{
+	enum ProcIdlePageType page_type;
+	pte_t *pte;
+	int err = 0;
+
+	pte = pte_offset_kernel(pmd, addr);
+	do {
+		if (!pte_present(*pte))
+			page_type = PTE_HOLE;
+		else if (!test_and_clear_bit(_PAGE_BIT_ACCESSED,
+					     (unsigned long *) &pte->pte))
+			page_type = PTE_IDLE;
+		else {
+			page_type = PTE_ACCESSED;
+		}
+
+		err = eic_add_page(eic, addr, addr + PAGE_SIZE, page_type);
+		if (err)
+			break;
+	} while (pte++, addr += PAGE_SIZE, addr != next);
+
+	return err;
+}
+
+static int mm_idle_pmd_entry(pmd_t *pmd, unsigned long addr,
+			     unsigned long next, struct mm_walk *walk)
+{
+	struct ept_idle_ctrl *eic = walk->private;
+	enum ProcIdlePageType page_type;
+	enum ProcIdlePageType pte_page_type;
+	int err;
+
+	/*
+	 * Skip duplicate PMD_IDLE_PTES: when the PMD crosses VMA boundary,
+	 * walk_page_range() can call on the same PMD twice.
+	 */
+	if ((addr & PMD_MASK) == (eic->last_va & PMD_MASK)) {
+		debug_printk("ignore duplicate addr %lx %lx\n",
+			     addr, eic->last_va);
+		return 0;
+	}
+	eic->last_va = addr;
+
+	if (eic->flags & SCAN_HUGE_PAGE)
+		pte_page_type = PMD_IDLE_PTES;
+	else
+		pte_page_type = IDLE_PAGE_TYPE_MAX;
+
+	if (!pmd_present(*pmd))
+		page_type = PMD_HOLE;
+	else if (!test_and_clear_bit(_PAGE_BIT_ACCESSED, (unsigned long *)pmd)) {
+		if (pmd_large(*pmd))
+			page_type = PMD_IDLE;
+		else if (eic->flags & SCAN_SKIM_IDLE)
+			page_type = PMD_IDLE_PTES;
+		else
+			page_type = pte_page_type;
+	} else if (pmd_large(*pmd)) {
+		page_type = PMD_ACCESSED;
+	} else
+		page_type = pte_page_type;
+
+	if (page_type != IDLE_PAGE_TYPE_MAX)
+		err = eic_add_page(eic, addr, next, page_type);
+	else
+		err = mm_idle_pte_range(eic, pmd, addr, next);
+
+	return err;
+}
+
+static int mm_idle_pud_entry(pud_t *pud, unsigned long addr,
+			     unsigned long next, struct mm_walk *walk)
+{
+	struct ept_idle_ctrl *eic = walk->private;
+
+	if ((addr & PUD_MASK) != (eic->last_va & PUD_MASK)) {
+		eic_add_page(eic, addr, next, PUD_PRESENT);
+		eic->last_va = addr;
+	}
+	return 1;
+}
+
+static int mm_idle_test_walk(unsigned long start, unsigned long end,
+			     struct mm_walk *walk)
+{
+	struct vm_area_struct *vma = walk->vma;
+
+	if (vma->vm_file) {
+		if ((vma->vm_flags & (VM_WRITE|VM_MAYSHARE)) == VM_WRITE)
+		    return 0;
+		return 1;
+	}
+
+	return 0;
+}
+
+static int mm_idle_walk_range(struct ept_idle_ctrl *eic,
+			      unsigned long start,
+			      unsigned long end,
+			      struct mm_walk *walk)
+{
+	struct vm_area_struct *vma;
+	int ret;
+
+	init_ept_idle_ctrl_buffer(eic);
+
+	for (; start < end;)
+	{
+		down_read(&walk->mm->mmap_sem);
+		vma = find_vma(walk->mm, start);
+		if (vma) {
+			if (end > vma->vm_start) {
+				local_irq_disable();
+				ret = walk_page_range(start, end, walk);
+				local_irq_enable();
+			} else
+				set_restart_gpa(vma->vm_start, "VMA-HOLE");
+		} else
+			set_restart_gpa(TASK_SIZE, "EOF");
+		up_read(&walk->mm->mmap_sem);
+
+		WARN_ONCE(eic->gpa_to_hva, "non-zero gpa_to_hva");
+		start = eic->restart_gpa;
+		ret = ept_idle_copy_user(eic, start, end);
+		if (ret)
+			break;
+	}
+
+	if (eic->bytes_copied) {
+		if (ret != EPT_IDLE_BUF_FULL && eic->next_hva < end)
+			debug_printk("partial scan: next_hva=%lx end=%lx\n",
+				     eic->next_hva, end);
+		ret = 0;
+	} else
+		WARN_ONCE(1, "nothing read");
+	return ret;
+}
+
+static ssize_t mm_idle_read(struct file *file, char *buf,
+			    size_t count, loff_t *ppos)
+{
+	struct mm_struct *mm = file->private_data;
+	struct mm_walk mm_walk = {};
+	struct ept_idle_ctrl *eic;
+	unsigned long va_start = *ppos;
+	unsigned long va_end = va_start + (count << (3 + PAGE_SHIFT));
+	int ret;
+
+	if (va_end <= va_start) {
+		debug_printk("mm_idle_read past EOF: %lx %lx\n",
+			     va_start, va_end);
+		return 0;
+	}
+	if (*ppos & (PAGE_SIZE - 1)) {
+		debug_printk("mm_idle_read unaligned ppos: %lx\n",
+			     va_start);
+		return -EINVAL;
+	}
+	if (count < EPT_IDLE_BUF_MIN) {
+		debug_printk("mm_idle_read small count: %lx\n",
+			     (unsigned long)count);
+		return -EINVAL;
+	}
+
+	eic = kzalloc(sizeof(*eic), GFP_KERNEL);
+	if (!eic)
+		return -ENOMEM;
+
+	if (!mm || !mmget_not_zero(mm)) {
+		ret = -ESRCH;
+		goto out_free;
+	}
+
+	eic->buf = buf;
+	eic->buf_size = count;
+	eic->mm = mm;
+	eic->flags = file->f_flags;
+
+	mm_walk.mm = mm;
+	mm_walk.pmd_entry = mm_idle_pmd_entry;
+	mm_walk.pud_entry = mm_idle_pud_entry;
+	mm_walk.test_walk = mm_idle_test_walk;
+	mm_walk.private = eic;
+
+	ret = mm_idle_walk_range(eic, va_start, va_end, &mm_walk);
+	if (ret)
+		goto out_mm;
+
+	ret = eic->bytes_copied;
+	*ppos = eic->next_hva;
+	debug_printk("ppos=%lx bytes_copied=%d\n",
+		     eic->next_hva, ret);
+out_mm:
+	mmput(mm);
+out_free:
+	kfree(eic);
 	return ret;
 }
 
