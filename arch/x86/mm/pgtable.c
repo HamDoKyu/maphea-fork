@@ -22,17 +22,30 @@ EXPORT_SYMBOL(physical_mask);
 #endif
 
 gfp_t __userpte_alloc_gfp = PGALLOC_GFP | PGALLOC_USER_GFP;
+nodemask_t all_node_mask = NODE_MASK_ALL;
+
+unsigned long __get_free_pgtable_pages(gfp_t gfp_mask,
+						     unsigned int order)
+{
+	struct page *page;
+
+	page = __alloc_pages_nodemask(gfp_mask, order, numa_node_id(), &all_node_mask);
+	if (!page)
+		return 0;
+	return (unsigned long) page_address(page);
+}
+EXPORT_SYMBOL(__get_free_pgtable_pages);
 
 pte_t *pte_alloc_one_kernel(struct mm_struct *mm, unsigned long address)
 {
-	return (pte_t *)__get_free_page(PGALLOC_GFP & ~__GFP_ACCOUNT);
+	return (pte_t *)__get_free_pgtable_pages(PGALLOC_GFP & ~__GFP_ACCOUNT, 0);
 }
 
 pgtable_t pte_alloc_one(struct mm_struct *mm, unsigned long address)
 {
 	struct page *pte;
 
-	pte = alloc_pages(__userpte_alloc_gfp, 0);
+	pte = __alloc_pages_nodemask(__userpte_alloc_gfp, 0, numa_node_id(), &all_node_mask);
 	if (!pte)
 		return NULL;
 	if (!pgtable_page_ctor(pte)) {
@@ -241,7 +254,7 @@ static int preallocate_pmds(struct mm_struct *mm, pmd_t *pmds[], int count)
 		gfp &= ~__GFP_ACCOUNT;
 
 	for (i = 0; i < count; i++) {
-		pmd_t *pmd = (pmd_t *)__get_free_page(gfp);
+		pmd_t *pmd = (pmd_t *)__get_free_pgtable_pages(gfp, 0);
 		if (!pmd)
 			failed = true;
 		if (pmd && !pgtable_pmd_page_ctor(virt_to_page(pmd))) {
@@ -422,7 +435,8 @@ static inline void _pgd_free(pgd_t *pgd)
 
 static inline pgd_t *_pgd_alloc(void)
 {
-	return (pgd_t *)__get_free_pages(PGALLOC_GFP, PGD_ALLOCATION_ORDER);
+	return (pgd_t *)__get_free_pgtable_pages(PGALLOC_GFP,
+						 PGD_ALLOCATION_ORDER);
 }
 
 static inline void _pgd_free(pgd_t *pgd)

@@ -96,10 +96,11 @@ static inline pmd_t *pmd_alloc_one(struct mm_struct *mm, unsigned long addr)
 {
 	struct page *page;
 	gfp_t gfp = GFP_KERNEL_ACCOUNT | __GFP_ZERO;
+	nodemask_t all_node_mask = NODE_MASK_ALL;
 
 	if (mm == &init_mm)
 		gfp &= ~__GFP_ACCOUNT;
-	page = alloc_pages(gfp, 0);
+	page = __alloc_pages_nodemask(gfp, 0, numa_node_id(), &all_node_mask);
 	if (!page)
 		return NULL;
 	if (!pgtable_pmd_page_ctor(page)) {
@@ -141,13 +142,16 @@ static inline void p4d_populate(struct mm_struct *mm, p4d_t *p4d, pud_t *pud)
 	set_p4d(p4d, __p4d(_PAGE_TABLE | __pa(pud)));
 }
 
+extern unsigned long __get_free_pgtable_pages(gfp_t gfp_mask,
+					      unsigned int order);
+
 static inline pud_t *pud_alloc_one(struct mm_struct *mm, unsigned long addr)
 {
 	gfp_t gfp = GFP_KERNEL_ACCOUNT;
 
 	if (mm == &init_mm)
 		gfp &= ~__GFP_ACCOUNT;
-	return (pud_t *)get_zeroed_page(gfp);
+	return (pud_t *)__get_free_pgtable_pages(gfp | __GFP_ZERO, 0);
 }
 
 static inline void pud_free(struct mm_struct *mm, pud_t *pud)
@@ -179,7 +183,7 @@ static inline p4d_t *p4d_alloc_one(struct mm_struct *mm, unsigned long addr)
 
 	if (mm == &init_mm)
 		gfp &= ~__GFP_ACCOUNT;
-	return (p4d_t *)get_zeroed_page(gfp);
+	return (p4d_t *)__get_free_pgtable_pages(gfp | __GFP_ZERO, 0);
 }
 
 static inline void p4d_free(struct mm_struct *mm, p4d_t *p4d)
