@@ -55,6 +55,8 @@
 
 #include "internal.h"
 
+#define MPOL_MF_SW_YOUNG (1<<7)
+
 /*
  * migrate_prep() needs to be called before we start compiling a list of pages
  * to be migrated using isolate_lru_page(). If scheduling work on other CPUs is
@@ -1484,12 +1486,13 @@ static int do_move_pages_to_node(struct mm_struct *mm,
  * the target node
  */
 static int add_page_for_migration(struct mm_struct *mm, unsigned long addr,
-		int node, struct list_head *pagelist, bool migrate_all)
+		int node, struct list_head *pagelist, int flags)
 {
 	struct vm_area_struct *vma;
 	struct page *page;
 	unsigned int follflags;
 	int err;
+	bool migrate_all = flags & MPOL_MF_MOVE_ALL;
 
 	down_read(&mm->mmap_sem);
 	err = -EFAULT;
@@ -1519,6 +1522,8 @@ static int add_page_for_migration(struct mm_struct *mm, unsigned long addr,
 
 	if (PageHuge(page)) {
 		if (PageHead(page)) {
+			if (flags & MPOL_MF_SW_YOUNG)
+				SetPageReferenced(page);
 			isolate_huge_page(page, pagelist);
 			err = 0;
 		}
@@ -1531,6 +1536,8 @@ static int add_page_for_migration(struct mm_struct *mm, unsigned long addr,
 			goto out_putpage;
 
 		err = 0;
+		if (flags & MPOL_MF_SW_YOUNG)
+			SetPageReferenced(head);
 		list_add_tail(&head->lru, pagelist);
 		mod_node_page_state(page_pgdat(head),
 			NR_ISOLATED_ANON + page_is_file_cache(head),
@@ -1606,7 +1613,7 @@ static int do_pages_move(struct mm_struct *mm, nodemask_t task_nodes,
 		 * report them via status
 		 */
 		err = add_page_for_migration(mm, addr, current_node,
-				&pagelist, flags & MPOL_MF_MOVE_ALL);
+				&pagelist, flags);
 		if (!err)
 			continue;
 
@@ -1725,7 +1732,7 @@ static int kernel_move_pages(pid_t pid, unsigned long nr_pages,
 	nodemask_t task_nodes;
 
 	/* Check flags */
-	if (flags & ~(MPOL_MF_MOVE|MPOL_MF_MOVE_ALL))
+	if (flags & ~(MPOL_MF_MOVE|MPOL_MF_MOVE_ALL|MPOL_MF_SW_YOUNG))
 		return -EINVAL;
 
 	if ((flags & MPOL_MF_MOVE_ALL) && !capable(CAP_SYS_NICE))
