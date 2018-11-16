@@ -242,6 +242,16 @@ static ssize_t type_show(struct device *dev,
 }
 static DEVICE_ATTR(type, S_IRUGO, type_show, NULL);
 
+static ssize_t peer_node_show(struct device *dev,
+			struct device_attribute *attr, char *buf)
+{
+	int nid = dev->id;
+	struct pglist_data *pgdat = NODE_DATA(nid);
+
+	return sprintf(buf, "%d\n", pgdat->peer_node);
+}
+static DEVICE_ATTR(peer_node, S_IRUGO, peer_node_show, NULL);
+
 static struct attribute *node_dev_attrs[] = {
 	&dev_attr_cpumap.attr,
 	&dev_attr_cpulist.attr,
@@ -250,6 +260,7 @@ static struct attribute *node_dev_attrs[] = {
 	&dev_attr_distance.attr,
 	&dev_attr_vmstat.attr,
 	&dev_attr_type.attr,
+	&dev_attr_peer_node.attr,
 	NULL
 };
 ATTRIBUTE_GROUPS(node_dev);

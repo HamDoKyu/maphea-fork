@@ -713,6 +713,18 @@ typedef struct pglist_data {
 	/* Per-node vmstats */
 	struct per_cpu_nodestat __percpu *per_cpu_nodestats;
 	atomic_long_t		vm_stat[NR_VM_NODE_STAT_ITEMS];
+
+	/*
+	 * Points to the nearest node in terms of latency
+	 * E.g. peer of node 0 is node 2 per SLIT
+	 * node distances:
+	 * node   0   1   2   3
+	 *   0:  10  21  17  28
+	 *   1:  21  10  28  17
+	 *   2:  17  28  10  28
+	 *   3:  28  17  28  10
+	 */
+	int	peer_node;
 } pg_data_t;
 
 #define node_present_pages(nid)	(NODE_DATA(nid)->node_present_pages)
