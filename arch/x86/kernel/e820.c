@@ -403,7 +403,8 @@ static int __init __append_e820_table(struct boot_e820_entry *entries, u32 nr_en
 		/* Ignore the entry on 64-bit overflow: */
 		if (start > end && likely(size))
 			return -1;
-
+		if (type == E820_TYPE_PMEM)
+			type = E820_TYPE_RAM;
 		e820__range_add(start, size, type);
 
 		entry++;
