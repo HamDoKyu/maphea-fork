@@ -1745,6 +1745,20 @@ static int policy_node(gfp_t gfp, struct mempolicy *policy,
 		WARN_ON_ONCE(policy->mode == MPOL_BIND && (gfp & __GFP_THISNODE));
 	}
 
+	if (policy->mode == MPOL_BIND) {
+		nodemask_t nodes = policy->v.nodes;
+
+		/*
+		 * The rule is if we run on DRAM node and mbind to PMEM node,
+		 * perferred node id is the peer node, vice versa.
+		 * if we run on DRAM node and mbind to DRAM node, #PF node is
+		 * the preferred node, vice versa, so just fall back.
+		 */
+		if ((is_node_dram(nd) && nodes_subset(nodes, numa_nodes_pmem)) ||
+			(is_node_pmem(nd) && nodes_subset(nodes, numa_nodes_dram)))
+			nd = NODE_DATA(nd)->peer_node;
+	}
+
 	return nd;
 }
 

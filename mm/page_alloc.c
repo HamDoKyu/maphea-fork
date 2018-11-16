@@ -5153,6 +5153,10 @@ static int find_next_best_node(int node, nodemask_t *used_node_mask)
 		if (node_isset(n, *used_node_mask))
 			continue;
 
+		/* DRAM node doesn't fallback to pmem node */
+		if (is_node_pmem(n))
+			continue;
+
 		/* Use the distance array to find the distance */
 		val = node_distance(node, n);
 
@@ -5242,19 +5246,31 @@ static void build_zonelists(pg_data_t *pgdat)
 	nodes_clear(used_mask);
 
 	memset(node_order, 0, sizeof(node_order));
-	while ((node = find_next_best_node(local_node, &used_mask)) >= 0) {
-		/*
-		 * We don't want to pressure a particular node.
-		 * So adding penalty to the first node in same
-		 * distance group to make it round-robin.
-		 */
-		if (node_distance(local_node, node) !=
-		    node_distance(local_node, prev_node))
-			node_load[node] = load;
+	/* Pmem node doesn't fallback to DRAM node */
+	if (is_node_pmem(local_node)) {
+		int n;
 
-		node_order[nr_nodes++] = node;
-		prev_node = node;
-		load--;
+		/* Pmem nodes should fallback to each other */
+		node_order[nr_nodes++] = local_node;
+		for_each_node_state(n, N_MEMORY) {
+			if ((n != local_node) && is_node_pmem(n))
+				node_order[nr_nodes++] = n;
+		}
+	} else {
+		while ((node = find_next_best_node(local_node, &used_mask)) >= 0) {
+			/*
+			 * We don't want to pressure a particular node.
+			 * So adding penalty to the first node in same
+			 * distance group to make it round-robin.
+			 */
+			if (node_distance(local_node, node) !=
+			    node_distance(local_node, prev_node))
+				node_load[node] = load;
+
+			node_order[nr_nodes++] = node;
+			prev_node = node;
+			load--;
+		}
 	}
 
 	build_zonelists_in_node_order(pgdat, node_order, nr_nodes);
