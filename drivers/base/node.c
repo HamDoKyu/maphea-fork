@@ -233,6 +233,15 @@ static ssize_t node_read_distance(struct device *dev,
 }
 static DEVICE_ATTR(distance, S_IRUGO, node_read_distance, NULL);
 
+static ssize_t type_show(struct device *dev,
+			struct device_attribute *attr, char *buf)
+{
+	int nid = dev->id;
+
+	return sprintf(buf, is_node_pmem(nid) ? "pmem\n" : "dram\n");
+}
+static DEVICE_ATTR(type, S_IRUGO, type_show, NULL);
+
 static struct attribute *node_dev_attrs[] = {
 	&dev_attr_cpumap.attr,
 	&dev_attr_cpulist.attr,
@@ -240,6 +249,7 @@ static struct attribute *node_dev_attrs[] = {
 	&dev_attr_numastat.attr,
 	&dev_attr_distance.attr,
 	&dev_attr_vmstat.attr,
+	&dev_attr_type.attr,
 	NULL
 };
 ATTRIBUTE_GROUPS(node_dev);
