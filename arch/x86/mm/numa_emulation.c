@@ -12,6 +12,8 @@
 
 static int emu_nid_to_phys[MAX_NUMNODES];
 static char *emu_cmdline __initdata;
+static nodemask_t emu_numa_nodes_pmem;
+static nodemask_t emu_numa_nodes_dram;
 
 void __init numa_emu_cmdline(char *str)
 {
@@ -311,6 +313,12 @@ static int __init split_nodes_size_interleave_uniform(struct numa_meminfo *ei,
 					       min(end, limit) - start);
 			if (ret < 0)
 				return ret;
+
+			/* Update numa node type for fake numa node */
+			if (node_isset(i, emu_numa_nodes_pmem))
+				node_set(nid - 1, numa_nodes_pmem);
+			else
+				node_set(nid - 1, numa_nodes_dram);
 		}
 	}
 	return nid;
@@ -409,6 +417,12 @@ void __init numa_emulation(struct numa_meminfo *numa_meminfo, int numa_dist_cnt)
 		nodemask_t physnode_mask = numa_nodes_parsed;
 		unsigned long n;
 		int nid = 0;
+
+		emu_numa_nodes_pmem = numa_nodes_pmem;
+		emu_numa_nodes_dram = numa_nodes_dram;
+
+		nodes_clear(numa_nodes_pmem);
+		nodes_clear(numa_nodes_dram);
 
 		n = simple_strtoul(emu_cmdline, &emu_cmdline, 0);
 		ret = -1;
