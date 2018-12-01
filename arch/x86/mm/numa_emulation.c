@@ -381,7 +381,21 @@ void __init numa_emulation(struct numa_meminfo *numa_meminfo, int numa_dist_cnt)
 		goto no_emu;
 
 	memset(&ei, 0, sizeof(ei));
-	pi = *numa_meminfo;
+
+	{
+		/* Make sure the index is identical with nid */
+		struct numa_meminfo *mi = numa_meminfo;
+		int nid;
+
+		for (i = 0; i < mi->nr_blks; i++) {
+			nid = mi->blk[i].nid;
+			pi.blk[nid].nid = nid;
+			pi.blk[nid].start = mi->blk[i].start;
+			pi.blk[nid].end = mi->blk[i].end;
+		}
+		pi.nr_blks = mi->nr_blks;
+
+	}
 
 	for (i = 0; i < MAX_NUMNODES; i++)
 		emu_nid_to_phys[i] = NUMA_NO_NODE;
