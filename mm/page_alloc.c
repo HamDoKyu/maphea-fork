@@ -6941,16 +6941,22 @@ static int find_best_peer_node(int nid)
 	int n, val;
 	int min_val = INT_MAX;
 	int peer = NUMA_NO_NODE;
+	static nodemask_t target_nodes = NODE_MASK_NONE;
 
 	for_each_online_node(n) {
 		if (n == nid)
 			continue;
 		val = node_distance(nid, n);
+		if (val == LOCAL_DISTANCE)
+			continue;
+		if (node_isset(n, target_nodes))
+			continue;
 		if (val < min_val) {
 			min_val = val;
 			peer = n;
 		}
 	}
+	node_set(peer, target_nodes);
 	return peer;
 }
 
