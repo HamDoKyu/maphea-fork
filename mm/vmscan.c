@@ -2259,7 +2259,7 @@ static bool inactive_list_is_low(struct lruvec *lruvec, bool file,
 	 * If we don't have swap space, anonymous page deactivation
 	 * is pointless.
 	 */
-	if (!file && !total_swap_pages)
+	if (!file && (is_node_pmem(pgdat->node_id) && !total_swap_pages))
 		return false;
 
 	inactive = lruvec_lru_size(lruvec, inactive_lru, sc->reclaim_idx);
@@ -2340,7 +2340,8 @@ static void get_scan_count(struct lruvec *lruvec, struct mem_cgroup *memcg,
 	enum lru_list lru;
 
 	/* If we have no swap space, do not bother scanning anon pages. */
-	if (!sc->may_swap || mem_cgroup_get_nr_swap_pages(memcg) <= 0) {
+	if (is_node_pmem(pgdat->node_id) &&
+	    (!sc->may_swap || mem_cgroup_get_nr_swap_pages(memcg) <= 0)) {
 		scan_balance = SCAN_FILE;
 		goto out;
 	}
