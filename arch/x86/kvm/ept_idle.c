@@ -475,6 +475,7 @@ static int ept_idle_walk_hva_range(struct ept_idle_ctrl *eic,
 {
 	unsigned long gpa_addr;
 	unsigned long addr_range;
+	unsigned long va_end;
 	int ret;
 
 	ret = ept_idle_supports_cpu(eic->kvm);
@@ -488,19 +489,22 @@ static int ept_idle_walk_hva_range(struct ept_idle_ctrl *eic,
 
 		if (gpa_addr == INVALID_PAGE) {
 			eic->gpa_to_hva = 0;
-			if (addr_range == ~0UL) /* beyond max virtual address */
+			if (addr_range == ~0UL) /* beyond max virtual address */ {
 				set_restart_gpa(TASK_SIZE, "EOF");
-			else {
+				va_end = end;
+			} else {
 				start += addr_range;
 				set_restart_gpa(start, "OUT-OF-SLOT");
+				va_end = start;
 			}
 		} else {
 			eic->gpa_to_hva = start - gpa_addr;
 			ept_page_range(eic, gpa_addr, gpa_addr + addr_range);
+			va_end = eic->gpa_to_hva + gpa_addr + addr_range;
 		}
 
 		start = eic->restart_gpa + eic->gpa_to_hva;
-		ret = ept_idle_copy_user(eic, start, end);
+		ret = ept_idle_copy_user(eic, start, va_end);
 		if (ret)
 			break;
 	}
