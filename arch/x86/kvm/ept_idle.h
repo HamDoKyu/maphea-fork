@@ -3,6 +3,7 @@
 
 #define SCAN_HUGE_PAGE		O_NONBLOCK	/* only huge page */
 #define SCAN_SKIM_IDLE		O_NOFOLLOW	/* stop on PMD_IDLE_PTES */
+#define SCAN_DIRTY_PAGE		O_NOATIME   /* report pte/pmd dirty bit */
 
 enum ProcIdlePageType {
 	PTE_ACCESSED,	/* 4k page */
@@ -31,7 +32,9 @@ enum ProcIdlePageType {
 #define PIP_CMD_SET_HVA		PIP_COMPOSE(PIP_CMD, 0)
 
 #define _PAGE_BIT_EPT_ACCESSED	8
+#define _PAGE_BIT_EPT_DIRTY		9
 #define _PAGE_EPT_ACCESSED	(_AT(pteval_t, 1) << _PAGE_BIT_EPT_ACCESSED)
+#define _PAGE_EPT_DIRTY	(_AT(pteval_t, 1) << _PAGE_BIT_EPT_DIRTY)
 
 #define _PAGE_EPT_PRESENT	(_AT(pteval_t, 7))
 

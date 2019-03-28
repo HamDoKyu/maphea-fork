@@ -180,6 +180,11 @@ static int ept_pte_range(struct ept_idle_ctrl *eic,
 			page_type = PTE_IDLE;
 		else {
 			page_type = PTE_ACCESSED;
+			if (eic->flags & SCAN_DIRTY_PAGE) {
+				if (test_and_clear_bit(_PAGE_BIT_EPT_DIRTY,
+						(unsigned long *) &pte->pte))
+					page_type = PTE_DIRTY;
+			}
 		}
 
 		err = eic_add_page(eic, addr, addr + PAGE_SIZE, page_type);
@@ -220,6 +225,12 @@ static int ept_pmd_range(struct ept_idle_ctrl *eic,
 				page_type = pte_page_type;
 		} else if (pmd_large(*pmd)) {
 			page_type = PMD_ACCESSED;
+			if (eic->flags & SCAN_DIRTY_PAGE) {
+				if (test_and_clear_bit(_PAGE_BIT_EPT_DIRTY,
+						(unsigned long *) pmd))
+					page_type = PMD_DIRTY;
+			}
+
 		} else
 			page_type = pte_page_type;
 
@@ -563,6 +574,7 @@ static ssize_t ept_idle_read(struct file *file, char *buf,
 	eic->buf = buf;
 	eic->buf_size = count;
 	eic->mm = mm;
+	eic->flags = file->f_flags;
 	eic->kvm = mm_kvm(mm);
 	if (!eic->kvm) {
 		ret = -EINVAL;
