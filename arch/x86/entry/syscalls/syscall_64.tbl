@@ -386,3 +386,8 @@
 545	x32	execveat		__x32_compat_sys_execveat/ptregs
 546	x32	preadv2			__x32_compat_sys_preadv64v2
 547	x32	pwritev2		__x32_compat_sys_pwritev64v2
+
+548 64 set_pages_uc   __x64_sys_set_pages_uc
+549 64 set_pages_wc   __x64_sys_set_pages_wc
+550 64 set_pages_wt   __x64_sys_set_pages_wt
+551 64 free_pages_memtype   __x64_sys_free_pages_memtype

@@ -58,6 +58,10 @@ int set_pages_array_wc(struct page **pages, int addrinarray);
 int set_pages_array_wt(struct page **pages, int addrinarray);
 int set_pages_array_wb(struct page **pages, int addrinarray);
 
+int change_page_attr_set_clr_maphea(unsigned long *addr, int numpages,
+                                    pgprot_t mask_set, pgprot_t mask_clr,
+                                    struct page **pages);
+
 /*
  * For legacy compatibility with the old APIs, a few functions
  * are provided that work on a "struct page".

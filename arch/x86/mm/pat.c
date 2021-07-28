@@ -665,6 +665,120 @@ int free_memtype(u64 start, u64 end)
 	return 0;
 }
 
+/*
+ * req_type typically has one of the:
+ * - _PAGE_CACHE_MODE_WB
+ * - _PAGE_CACHE_MODE_WC
+ * - _PAGE_CACHE_MODE_UC_MINUS
+ * - _PAGE_CACHE_MODE_UC
+ * - _PAGE_CACHE_MODE_WT
+ *
+ * If new_type is NULL, function will return an error if it cannot reserve the
+ * region with req_type. If new_type is non-NULL, function will return
+ * available type in new_type in case of no error. In case of any error
+ * it will return a negative return value.
+ */
+int reserve_memtype_maphea(u64 start, u64 end, enum page_cache_mode req_type,
+		    enum page_cache_mode *new_type)
+{
+	struct memtype *new;
+	enum page_cache_mode actual_type;
+	int err = 0;
+
+	start = sanitize_phys(start);
+	end = sanitize_phys(end);
+	if (start >= end) {
+		WARN(1, "%s failed: [mem %#010Lx-%#010Lx], req %s\n", __func__,
+				start, end - 1, cattr_name(req_type));
+		return -EINVAL;
+	}
+
+	if (!pat_enabled()) {
+		/* This is identical to page table setting without PAT */
+		if (new_type)
+			*new_type = req_type;
+		return 0;
+	}
+
+	/* Low ISA region is always mapped WB in page table. No need to track */
+	if (x86_platform.is_untracked_pat_range(start, end)) {
+		if (new_type)
+			*new_type = _PAGE_CACHE_MODE_WB;
+		return 0;
+	}
+
+	/*
+	 * Call mtrr_lookup to get the type hint. This is an
+	 * optimization for /dev/mem mmap'ers into WB memory (BIOS
+	 * tools and ACPI tools). Use WB request for WB memory and use
+	 * UC_MINUS otherwise.
+	 */
+	actual_type = pat_x_mtrr_type(start, end, req_type);
+
+	if (new_type)
+		*new_type = actual_type;
+
+	new  = kzalloc(sizeof(struct memtype), GFP_KERNEL);
+	if (!new)
+		return -ENOMEM;
+
+	new->start	= start;
+	new->end	= end;
+	new->type	= actual_type;
+
+	spin_lock(&memtype_lock);
+
+	err = rbt_memtype_check_insert(new, new_type);
+	if (err) {
+		pr_info("x86/PAT: reserve_memtype failed [mem %#010Lx-%#010Lx], track %s, req %s\n",
+			start, end - 1,
+			cattr_name(new->type), cattr_name(req_type));
+		kfree(new);
+		spin_unlock(&memtype_lock);
+
+		return err;
+	}
+
+	spin_unlock(&memtype_lock);
+
+	dprintk("reserve_memtype added [mem %#010Lx-%#010Lx], track %s, req %s, ret %s\n",
+		start, end - 1, cattr_name(new->type), cattr_name(req_type),
+		new_type ? cattr_name(*new_type) : "-");
+
+	return err;
+}
+
+int free_memtype_maphea(u64 start, u64 end)
+{
+	struct memtype *entry;
+
+	if (!pat_enabled())
+		return 0;
+
+	start = sanitize_phys(start);
+	end = sanitize_phys(end);
+
+	/* Low ISA region is always mapped WB. No need to track */
+	if (x86_platform.is_untracked_pat_range(start, end))
+		return 0;
+
+	spin_lock(&memtype_lock);
+	entry = rbt_memtype_erase(start, end);
+	spin_unlock(&memtype_lock);
+
+	if (IS_ERR(entry)) {
+		pr_info("x86/PAT: %s:%d freeing invalid memtype [mem %#010Lx-%#010Lx]\n",
+			current->comm, current->pid, start, end - 1);
+		return -EINVAL;
+	}
+
+	kfree(entry);
+
+	dprintk("free_memtype request [mem %#010Lx-%#010Lx]\n", start, end - 1);
+
+	return 0;
+}
+
 
 /**
  * lookup_memtype - Looksup the memory type for a physical address

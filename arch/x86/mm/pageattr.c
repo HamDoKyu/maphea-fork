@@ -869,6 +869,152 @@ static int __should_split_large_page(pte_t *kpte, unsigned long address,
 	return 0;
 }
 
+static int __should_split_large_page_maphea(pte_t *pte, unsigned long address,
+				     struct cpa_data *cpa)
+{
+	unsigned long numpages, pmask, psize, lpaddr, pfn, old_pfn;
+	pgprot_t old_prot, new_prot, req_prot, chk_prot;
+	pte_t new_pte, old_pte, *tmp;
+	enum pg_level level;
+  struct task_struct  *task_t = current;
+  struct mm_struct    *mm;
+
+	/*
+	 * Check for races, another CPU might have split this page
+	 * up already:
+	 */
+  mm  = task_t->mm;
+  tmp = lookup_address_in_pgd(pgd_offset(mm, address), address, &level);
+	if (tmp != pte)
+		return 1;
+
+	switch (level) {
+	case PG_LEVEL_2M:
+		old_prot = pmd_pgprot(*(pmd_t *)pte);
+		old_pfn = pmd_pfn(*(pmd_t *)pte);
+		cpa_inc_2m_checked();
+		break;
+	case PG_LEVEL_1G:
+		old_prot = pud_pgprot(*(pud_t *)pte);
+		old_pfn = pud_pfn(*(pud_t *)pte);
+		cpa_inc_1g_checked();
+		break;
+	default:
+		return -EINVAL;
+	}
+
+	psize = page_level_size(level);
+	pmask = page_level_mask(level);
+
+	/*
+	 * Calculate the number of pages, which fit into this large
+	 * page starting at address:
+	 */
+	lpaddr = (address + psize) & pmask;
+	numpages = (lpaddr - address) >> PAGE_SHIFT;
+	if (numpages < cpa->numpages)
+		cpa->numpages = numpages;
+
+	/*
+	 * We are safe now. Check whether the new pgprot is the same:
+	 * Convert protection attributes to 4k-format, as cpa->mask* are set
+	 * up accordingly.
+	 */
+	old_pte = *pte;
+	/* Clear PSE (aka _PAGE_PAT) and move PAT bit to correct position */
+	req_prot = pgprot_large_2_4k(old_prot);
+
+	pgprot_val(req_prot) &= ~pgprot_val(cpa->mask_clr);
+	pgprot_val(req_prot) |= pgprot_val(cpa->mask_set);
+
+	/*
+	 * req_prot is in format of 4k pages. It must be converted to large
+	 * page format: the caching mode includes the PAT bit located at
+	 * different bit positions in the two formats.
+	 */
+	req_prot = pgprot_4k_2_large(req_prot);
+	req_prot = pgprot_clear_protnone_bits(req_prot);
+	if (pgprot_val(req_prot) & _PAGE_PRESENT)
+		pgprot_val(req_prot) |= _PAGE_PSE;
+
+	/*
+	 * old_pfn points to the large page base pfn. So we need to add the
+	 * offset of the virtual address:
+	 */
+	pfn = old_pfn + ((address & (psize - 1)) >> PAGE_SHIFT);
+	cpa->pfn = pfn;
+
+	/*
+	 * Calculate the large page base address and the number of 4K pages
+	 * in the large page
+	 */
+	lpaddr = address & pmask;
+	numpages = psize >> PAGE_SHIFT;
+
+	/*
+	 * Sanity check that the existing mapping is correct versus the static
+	 * protections. static_protections() guards against !PRESENT, so no
+	 * extra conditional required here.
+	 */
+	chk_prot = static_protections(old_prot, lpaddr, old_pfn, numpages,
+				      CPA_CONFLICT);
+
+	if (WARN_ON_ONCE(pgprot_val(chk_prot) != pgprot_val(old_prot))) {
+		/*
+		 * Split the large page and tell the split code to
+		 * enforce static protections.
+		 */
+		cpa->force_static_prot = 1;
+		return 1;
+	}
+
+	/*
+	 * Optimization: If the requested pgprot is the same as the current
+	 * pgprot, then the large page can be preserved and no updates are
+	 * required independent of alignment and length of the requested
+	 * range. The above already established that the current pgprot is
+	 * correct, which in consequence makes the requested pgprot correct
+	 * as well if it is the same. The static protection scan below will
+	 * not come to a different conclusion.
+	 */
+	if (pgprot_val(req_prot) == pgprot_val(old_prot)) {
+		cpa_inc_lp_sameprot(level);
+		return 0;
+	}
+
+	/*
+	 * If the requested range does not cover the full page, split it up
+	 */
+	if (address != lpaddr || cpa->numpages != numpages)
+		return 1;
+
+	/*
+	 * Check whether the requested pgprot is conflicting with a static
+	 * protection requirement in the large page.
+	 */
+	new_prot = static_protections(req_prot, lpaddr, old_pfn, numpages,
+				      CPA_DETECT);
+
+	/*
+	 * If there is a conflict, split the large page.
+	 *
+	 * There used to be a 4k wise evaluation trying really hard to
+	 * preserve the large pages, but experimentation has shown, that this
+	 * does not help at all. There might be corner cases which would
+	 * preserve one large page occasionally, but it's really not worth the
+	 * extra code and cycles for the common case.
+	 */
+	if (pgprot_val(req_prot) != pgprot_val(new_prot))
+		return 1;
+
+	/* All checks passed. Update the large page mapping. */
+	new_pte = pfn_pte(old_pfn, new_prot);
+	__set_pmd_pte(pte, address, new_pte);
+	cpa->flags |= CPA_FLUSHTLB;
+	cpa_inc_lp_preserved(level);
+	return 0;
+}
+
 static int should_split_large_page(pte_t *kpte, unsigned long address,
 				   struct cpa_data *cpa)
 {
@@ -879,6 +1025,21 @@ static int should_split_large_page(pte_t *kpte, unsigned long address,
 
 	spin_lock(&pgd_lock);
 	do_split = __should_split_large_page(kpte, address, cpa);
+	spin_unlock(&pgd_lock);
+
+	return do_split;
+}
+
+static int should_split_large_page_maphea(pte_t *pte, unsigned long address,
+				   struct cpa_data *cpa)
+{
+	int do_split;
+
+	if (cpa->force_split)
+		return 1;
+
+	spin_lock(&pgd_lock);
+	do_split = __should_split_large_page_maphea(pte, address, cpa);
 	spin_unlock(&pgd_lock);
 
 	return do_split;
@@ -1038,6 +1199,133 @@ static int split_large_page(struct cpa_data *cpa, pte_t *kpte,
 		return -ENOMEM;
 
 	if (__split_large_page(cpa, kpte, address, base))
+		__free_page(base);
+
+	return 0;
+}
+
+static int
+__split_large_page_maphea(struct cpa_data *cpa, pte_t *pte, unsigned long address,
+		   struct page *base)
+{
+	unsigned long lpaddr, lpinc, ref_pfn, pfn, pfninc = 1;
+	pte_t *pbase = (pte_t *)page_address(base);
+	unsigned int i, level;
+	pgprot_t ref_prot;
+  pte_t *tmp;
+  struct task_struct  *task_t = current;
+  struct mm_struct    *mm;
+
+	spin_lock(&pgd_lock);
+	/*
+	 * Check for races, another CPU might have split this page
+	 * up for us already:
+	 */
+  mm  = task_t->mm;
+  tmp = lookup_address_in_pgd(pgd_offset(mm, address), address, &level);
+	if (tmp != pte) {
+		spin_unlock(&pgd_lock);
+		return 1;
+	}
+
+	paravirt_alloc_pte(&init_mm, page_to_pfn(base));
+
+	switch (level) {
+	case PG_LEVEL_2M:
+		ref_prot = pmd_pgprot(*(pmd_t *)pte);
+		/*
+		 * Clear PSE (aka _PAGE_PAT) and move
+		 * PAT bit to correct position.
+		 */
+		ref_prot = pgprot_large_2_4k(ref_prot);
+		ref_pfn = pmd_pfn(*(pmd_t *)pte);
+		lpaddr = address & PMD_MASK;
+		lpinc = PAGE_SIZE;
+		break;
+
+	case PG_LEVEL_1G:
+		ref_prot = pud_pgprot(*(pud_t *)pte);
+		ref_pfn = pud_pfn(*(pud_t *)pte);
+		pfninc = PMD_PAGE_SIZE >> PAGE_SHIFT;
+		lpaddr = address & PUD_MASK;
+		lpinc = PMD_SIZE;
+		/*
+		 * Clear the PSE flags if the PRESENT flag is not set
+		 * otherwise pmd_present/pmd_huge will return true
+		 * even on a non present pmd.
+		 */
+		if (!(pgprot_val(ref_prot) & _PAGE_PRESENT))
+			pgprot_val(ref_prot) &= ~_PAGE_PSE;
+		break;
+
+	default:
+		spin_unlock(&pgd_lock);
+		return 1;
+	}
+
+	ref_prot = pgprot_clear_protnone_bits(ref_prot);
+
+	/*
+	 * Get the target pfn from the original entry:
+	 */
+	pfn = ref_pfn;
+	for (i = 0; i < PTRS_PER_PTE; i++, pfn += pfninc, lpaddr += lpinc)
+		split_set_pte(cpa, pbase + i, pfn, ref_prot, lpaddr, lpinc);
+
+	if (virt_addr_valid(address)) {
+		unsigned long pfn = PFN_DOWN(__pa(address));
+
+		if (pfn_range_is_mapped(pfn, pfn + 1))
+			split_page_count(level);
+	}
+
+	/*
+	 * Install the new, split up pagetable.
+	 *
+	 * We use the standard kernel pagetable protections for the new
+	 * pagetable protections, the actual ptes set above control the
+	 * primary protection behavior:
+	 */
+	__set_pmd_pte(pte, address, mk_pte(base, __pgprot(_KERNPG_TABLE)));
+
+	/*
+	 * Do a global flush tlb after splitting the large page
+	 * and before we do the actual change page attribute in the PTE.
+	 *
+	 * Without this, we violate the TLB application note, that says:
+	 * "The TLBs may contain both ordinary and large-page
+	 *  translations for a 4-KByte range of linear addresses. This
+	 *  may occur if software modifies the paging structures so that
+	 *  the page size used for the address range changes. If the two
+	 *  translations differ with respect to page frame or attributes
+	 *  (e.g., permissions), processor behavior is undefined and may
+	 *  be implementation-specific."
+	 *
+	 * We do this global tlb flush inside the cpa_lock, so that we
+	 * don't allow any other cpu, with stale tlb entries change the
+	 * page attribute in parallel, that also falls into the
+	 * just split large page entry.
+	 */
+	flush_tlb_all();
+	spin_unlock(&pgd_lock);
+
+	return 0;
+}
+
+static int split_large_page_maphea(struct cpa_data *cpa, pte_t *pte,
+			    unsigned long address)
+{
+	struct page *base;
+
+	if (!debug_pagealloc_enabled())
+		spin_unlock(&cpa_lock);
+	base = alloc_pages(GFP_KERNEL, 0);
+	if (!debug_pagealloc_enabled())
+		spin_lock(&cpa_lock);
+	if (!base)
+		return -ENOMEM;
+
+	if (__split_large_page_maphea(cpa, pte, address, base))
 		__free_page(base);
 
 	return 0;
@@ -1549,7 +1837,87 @@ repeat:
 	return err;
 }
 
+static int __change_page_attr_maphea(struct cpa_data *cpa)
+{
+	unsigned long address;
+	int do_split, err;
+	unsigned int level;
+  pte_t *pte, old_pte;
+  struct task_struct  *task_t = current;
+  struct mm_struct    *mm;
+
+  address = *cpa->vaddr;
+
+repeat:
+  mm  = task_t->mm;
+  pte = lookup_address_in_pgd(pgd_offset(mm, address), address, &level);
+  // printk("[MaPHeA Message] lookup_address_in_pgd %lx\n", address);
+  if (!pte)
+    return __cpa_process_fault(cpa, address, 0);
+
+  old_pte = *pte;
+  if (pte_none(old_pte))
+    return __cpa_process_fault(cpa, address, 0);
+
+  if (level == PG_LEVEL_4K) {
+    pte_t new_pte;
+    pgprot_t new_prot = pte_pgprot(old_pte);
+    unsigned long pfn = pte_pfn(old_pte);
+
+    pgprot_val(new_prot) &= ~pgprot_val(cpa->mask_clr);
+    pgprot_val(new_prot) |= pgprot_val(cpa->mask_set);
+
+    cpa_inc_4k_install();
+    new_prot = static_protections(new_prot, address, pfn, 1,
+        CPA_PROTECT);
+
+    new_prot = pgprot_clear_protnone_bits(new_prot);
+
+    /*
+     * We need to keep the pfn from the existing PTE,
+     * after all we're only going to change it's attributes
+     * not the memory it points to
+     */
+    new_pte = pfn_pte(pfn, new_prot);
+    cpa->pfn = pfn;
+    /*
+     * Do we really change anything ?
+     */
+    if (pte_val(old_pte) != pte_val(new_pte)) {
+      set_pte_atomic(pte, new_pte);
+      cpa->flags |= CPA_FLUSHTLB;
+    }
+    cpa->numpages = 1;
+    return 0;
+  }
+
+  /*
+   * Check, whether we can keep the large page intact
+   * and just change the pte:
+   */
+  do_split = should_split_large_page_maphea(pte, address, cpa);
+  // printk("[MaPHeA Message] should_split_large_page - do_split: %d\n", do_split);
+
+  /*
+   * When the range fits into the existing large page,
+   * return. cp->numpages and cpa->tlbflush have been updated in
+   * try_large_page:
+   */
+  if (do_split <= 0)
+    return do_split;
+
+  /*
+   * We have to split the large page:
+   */
+  err = split_large_page_maphea(cpa, pte, address);
+  if (!err)
+    goto repeat;
+
+  return err;
+}
+
 static int __change_page_attr_set_clr(struct cpa_data *cpa, int checkalias);
+static int __change_page_attr_set_clr_maphea(struct cpa_data *cpa);
 
 static int cpa_process_alias(struct cpa_data *cpa)
 {
@@ -1652,6 +2020,40 @@ static int __change_page_attr_set_clr(struct cpa_data *cpa, int checkalias)
 			cpa->curpage++;
 		else
 			*cpa->vaddr += cpa->numpages * PAGE_SIZE;
+
+	}
+	return 0;
+}
+
+/* MaPHeA extension */
+static int __change_page_attr_set_clr_maphea(struct cpa_data *cpa)
+{
+  unsigned long numpages = cpa->numpages;
+	int ret;
+
+	while (numpages) {
+		/*
+		 * Store the remaining nr of pages for the large page
+		 * preservation check.
+		 */
+		cpa->numpages = numpages;
+
+		if (!debug_pagealloc_enabled())
+			spin_lock(&cpa_lock);
+		ret = __change_page_attr_maphea(cpa);
+		if (!debug_pagealloc_enabled())
+			spin_unlock(&cpa_lock);
+		if (ret)
+			return ret;
+
+		/*
+		 * Adjust the number of pages with the result of the
+		 * CPA operation. Either a large page has been
+		 * preserved or a single page update happened.
+		 */
+		BUG_ON(cpa->numpages > numpages || !cpa->numpages);
+    numpages -= cpa->numpages;
+    *cpa->vaddr += cpa->numpages * PAGE_SIZE;
 
 	}
 	return 0;
@@ -1779,6 +2181,78 @@ static int change_page_attr_set_clr(unsigned long *addr, int numpages,
 	} else {
 		cpa_flush_range(baddr, numpages, cache);
 	}
+
+out:
+	return ret;
+}
+
+/* MaPHeA extension */
+int change_page_attr_set_clr_maphea(unsigned long *addr, int numpages,
+				    pgprot_t mask_set, pgprot_t mask_clr, struct page **pages)
+{
+	struct cpa_data cpa;
+	int ret, cache;
+	unsigned long baddr = 0;
+  
+	memset(&cpa, 0, sizeof(cpa));
+
+	/*
+	 * Check, if we are requested to set a not supported
+	 * feature.  Clearing non-supported features is OK.
+	 */
+	mask_set = canon_pgprot(mask_set);
+
+	if (!pgprot_val(mask_set) && !pgprot_val(mask_clr))
+		return 0;
+
+  /* Ensure we are PAGE_SIZE aligned */
+  if (*addr & ~PAGE_MASK) {
+    *addr &= PAGE_MASK;
+    /*
+     * People should not be passing in unaligned addresses:
+     */
+    WARN_ON_ONCE(1);
+  }
+  /*
+   * Save address for cache flush. *addr is modified in the call
+   * to __change_page_attr_set_clr() below.
+   */
+  baddr = make_addr_canonical_again(*addr);
+
+	/* Must avoid aliasing mappings in the highmem code */
+  kmap_flush_unused();
+
+	vm_unmap_aliases();
+
+	cpa.vaddr = addr;
+	cpa.pages = pages;
+	cpa.numpages = numpages;
+	cpa.mask_set = mask_set;
+	cpa.mask_clr = mask_clr;
+
+	ret = __change_page_attr_set_clr_maphea(&cpa);
+
+	/*
+	 * Check whether we really changed something:
+	 */
+	if (!(cpa.flags & CPA_FLUSHTLB))
+		goto out;
+
+	/*
+	 * No need to flush, when we did not set any of the caching
+	 * attributes:
+	 */
+	cache = !!pgprot2cachemode(mask_set);
+
+	/*
+	 * On error; flush everything to be sure.
+	 */
+	if (ret) {
+		cpa_flush_all(cache);
+		goto out;
+	}
+
+  cpa_flush_range(baddr, numpages, cache);
 
 out:
 	return ret;

@@ -84,6 +84,9 @@ union bpf_attr;
 #include <linux/personality.h>
 #include <trace/syscall.h>
 
+/* For MaPHeA extension */
+#include <asm/set_memory.h>
+
 #ifdef CONFIG_ARCH_HAS_SYSCALL_WRAPPER
 /*
  * It may be useful for an architecture to override the definitions of the
@@ -1119,6 +1122,12 @@ asmlinkage long sys_old_mmap(struct mmap_arg_struct __user *arg);
  * not implemented -- see kernel/sys_ni.c
  */
 asmlinkage long sys_ni_syscall(void);
+
+/* For MaPHeA extension */
+asmlinkage long sys_set_pages_uc(unsigned long addr, int numpages);
+asmlinkage long sys_set_pages_wc(unsigned long addr, int numpages);
+asmlinkage long sys_set_pages_wt(unsigned long addr, int numpages);
+asmlinkage long sys_set_pages_wb(unsigned long addr, int numpages);
 
 #endif /* CONFIG_ARCH_HAS_SYSCALL_WRAPPER */
 
