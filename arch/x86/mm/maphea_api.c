@@ -49,17 +49,17 @@ SYSCALL_DEFINE2(set_pages_wc, unsigned long, addr, int, numpages)
     return ret;
 
   // printk("[MaPHeA Message] set_memory_wc %lx, %d\n", addr, numpages);
-  ret = change_page_attr_set_clr_maphea(&addr, numpages, 
-                                        cachemode2pgprot(_PAGE_CACHE_MODE_UC_MINUS), 
-                                        __pgprot(0),
-                                        NULL);
+  // ret = change_page_attr_set_clr_maphea(&addr, numpages, 
+  //                                      cachemode2pgprot(_PAGE_CACHE_MODE_UC_MINUS), 
+  //                                      __pgprot(0),
+  //                                      NULL);
 
-  if (!ret) {
+  // if (!ret) {
     ret = change_page_attr_set_clr_maphea(&addr, numpages,
                                           cachemode2pgprot(_PAGE_CACHE_MODE_WC),
                                           __pgprot(_PAGE_CACHE_MASK),
                                           NULL);
-  }
+  // }
 
   if (ret)
     free_memtype_maphea(__pa(addr), __pa(addr) + numpages * PAGE_SIZE);
