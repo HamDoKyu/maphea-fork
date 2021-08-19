@@ -90,8 +90,20 @@ SYSCALL_DEFINE2(set_pages_wt, unsigned long, addr, int, numpages)
 
 SYSCALL_DEFINE2(free_pages_memtype, unsigned long, addr, int, numpages)
 {
+  int ret;
+
+  ret = free_memtype_maphea(__pa(addr), __pa(addr) + numpages * PAGE_SIZE);
   // printk("[MaPHeA Message] free_pages_memtype %lx, %d\n", addr, numpages);
-  free_memtype_maphea(__pa(addr), __pa(addr) + numpages * PAGE_SIZE);
+  if (ret)
+    return ret;
+
+  ret = change_page_attr_set_clr_maphea(&addr, numpages, 
+                                        __pgprot(0), 
+                                        __pgprot(_PAGE_CACHE_MASK),
+                                        NULL);
+
+  if (ret)
+    return ret;
 
   return 0;
 }
