@@ -132,3 +132,13 @@ all.config
 
 # Kdevelop4
 *.kdev4
+
+#build files
+builtin.a
+modules.builtin
+modules.order
+Module.symvers
+System.map
+vmlinux
+vmlinux-gdb.py
+vmlinux.o
