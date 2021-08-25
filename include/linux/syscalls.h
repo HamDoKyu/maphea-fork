@@ -1129,6 +1129,12 @@ asmlinkage long sys_set_pages_wc(unsigned long addr, int numpages);
 asmlinkage long sys_set_pages_wt(unsigned long addr, int numpages);
 asmlinkage long sys_set_pages_wb(unsigned long addr, int numpages);
 
+/*dk wrapper*/
+asmlinkage long sys_set_memory_uc_dk_wrapper(unsigned long addr, int numpages);
+asmlinkage long sys_set_memory_wc_dk_wrapper(unsigned long addr, int numpages);
+asmlinkage long sys_set_memory_wt_dk_wrapper(unsigned long addr, int numpages);
+asmlinkage long sys_set_memory_wb_dk_wrapper(unsigned long addr, int numpages);
+
 #endif /* CONFIG_ARCH_HAS_SYSCALL_WRAPPER */
 
 

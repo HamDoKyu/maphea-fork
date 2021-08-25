@@ -2,7 +2,7 @@
 VERSION = 4
 PATCHLEVEL = 20
 SUBLEVEL = 0
-EXTRAVERSION = -maphea-kernel-djoh
+EXTRAVERSION = -maphea-kernel-dk-PAT
 NAME = Shy Crocodile
 
 # *DOCUMENTATION*
