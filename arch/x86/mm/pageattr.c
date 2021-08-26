@@ -43,7 +43,7 @@ struct cpa_data {
 	struct page	**pages;
 };
 /*debugging cpa stat*/
-void cpa_print(struct cpa_data* data){
+/*void cpa_print(struct cpa_data* data){
 	printk(KERN_INFO "print CPA data\n");
 	printk(KERN_INFO "vaddr: %ld\n", (unsigned long) data->vaddr);
 	printk(KERN_INFO "The adress which is pointed by pgd: %ld\n", pgd_val(*(data->pgd)));
@@ -55,7 +55,7 @@ void cpa_print(struct cpa_data* data){
 	printk(KERN_INFO "foce_split: %d, force_static_prot: %d\n", data->force_split, data->force_static_prot);
 	printk(KERN_INFO "curpage: %d\n", data->curpage);
 	printk(KERN_INFO "address of page: %ld\n", (unsigned long) data->pages);
-}
+}*/
 enum cpa_warn {
 	CPA_CONFLICT,
 	CPA_PROTECT,
@@ -570,13 +570,13 @@ pte_t *lookup_address_in_pgd(pgd_t *pgd, unsigned long address,
 	*level = PG_LEVEL_NONE;
 
 	if (pgd_none(*pgd)){
-		printk(KERN_INFO "pgd none\n");
+		//printk(KERN_INFO "pgd none\n");
 		return NULL;
 	}
 
 	p4d = p4d_offset(pgd, address);
 	if (p4d_none(*p4d)){
-		printk(KERN_INFO "p4d none\n");
+		//printk(KERN_INFO "p4d none\n");
 		return NULL;
 	}
 
@@ -586,7 +586,7 @@ pte_t *lookup_address_in_pgd(pgd_t *pgd, unsigned long address,
 
 	pud = pud_offset(p4d, address);
 	if (pud_none(*pud)){
-		printk(KERN_INFO "pud none\n");
+		//printk(KERN_INFO "pud none\n");
 		return NULL;
 	}
 
@@ -596,7 +596,7 @@ pte_t *lookup_address_in_pgd(pgd_t *pgd, unsigned long address,
 
 	pmd = pmd_offset(pud, address);
 	if (pmd_none(*pmd)){
-		printk(KERN_INFO "pmd none\n");
+		//printk(KERN_INFO "pmd none\n");
 		return NULL;
 	}
 		
@@ -627,16 +627,23 @@ EXPORT_SYMBOL_GPL(lookup_address);
 static pte_t *_lookup_address_cpa(struct cpa_data *cpa, unsigned long address,
 				  unsigned int *level)
 {
-	printk(KERN_INFO "[_lookup_address_cpa]");
-	cpa_print(cpa);
-	printk(KERN_INFO "[_lookup_address_cpa] address: %ld\n", address);
+	//printk(KERN_INFO "[_lookup_address_cpa]");
+	//cpa_print(cpa);
+	//printk(KERN_INFO "[_lookup_address_cpa] address: %ld\n", address);
 	if (cpa->pgd){
-		printk(KERN_INFO "Enter into pgd phase\n");//debug
+		//printk(KERN_INFO "Enter into pgd phase\n");//debug
 		return lookup_address_in_pgd(cpa->pgd + pgd_index(address),
 					       address, level);
 	}
-	printk(KERN_INFO "raw finding phase\n");//debug
-	return lookup_address(address, level);
+	//printk(KERN_INFO "raw finding phase\n");//debug
+	//return lookup_address(address, level);
+	if(current->mm==NULL){
+		return lookup_address_in_pgd(pgd_offset_k(address), address, level);
+	}
+	else{
+		return lookup_address_in_pgd(pgd_offset(current->mm, address), address, level);
+	}
+	//return lookup_address_in_pgd(pgd_offset_k(address), address, level);
 }
 
 /*
@@ -1805,13 +1812,13 @@ repeat:
 	repeat_iter++;
 	kpte = _lookup_address_cpa(cpa, address, &level);
 	if (!kpte){
-		printk(KERN_INFO "kpte is zero. repeat_iter: %ld\n", kpte, repeat_iter); //debug
+		//printk(KERN_INFO "kpte is zero. repeat_iter: %ld\n", repeat_iter); //debug
 		return __cpa_process_fault(cpa, address, primary);
 	}//debug pair with brace
 
 	old_pte = *kpte;
 	if (pte_none(old_pte)){
-		printk(KERN_INFO "pte none for old pte. repeat_iter: %ld\n", repeat_iter); //debug
+		//printk(KERN_INFO "pte none for old pte. repeat_iter: %ld\n", repeat_iter); //debug
 		return __cpa_process_fault(cpa, address, primary);
 	}
 
@@ -1858,7 +1865,7 @@ repeat:
 	 * try_large_page:
 	 */
 	if (do_split <= 0){
-		printk(KERN_INFO "do_split is %d. repeat_iter: %ld\n", do_split, repeat_iter);// debug
+		//printk(KERN_INFO "do_split is %d. repeat_iter: %ld\n", do_split, repeat_iter);// debug
 		return do_split;
 	} //debug
 		
@@ -2033,19 +2040,19 @@ static int __change_page_attr_set_clr(struct cpa_data *cpa, int checkalias)
 
 		if (!debug_pagealloc_enabled())
 			spin_lock(&cpa_lock);
-		printk(KERN_INFO "Now enter into cpa phase\n");
+		//printk(KERN_INFO "Now enter into cpa phase\n");
 		ret = __change_page_attr(cpa, checkalias);
 		if (!debug_pagealloc_enabled())
 			spin_unlock(&cpa_lock);
 		if (ret){
-			printk(KERN_INFO "There's something happening at cpa phase.\n ret: %d, numpages left: %ld\n", ret, numpages);
+			//printk(KERN_INFO "There's something happening at cpa phase.\n ret: %d, numpages left: %ld\n", ret, numpages);
 			return ret;
 		}
 		//	return ret;
 
 		if (checkalias) {
 			ret = cpa_process_alias(cpa);
-			printk(KERN_INFO "Alias occurs\n");
+			//printk(KERN_INFO "Alias occurs\n");
 			if (ret)
 				return ret;
 		}
@@ -2140,7 +2147,7 @@ static int change_page_attr_set_clr(unsigned long *addr, int numpages,
 	 */
 	mask_set = canon_pgprot(mask_set);
 	int feature_support_flag=!pgprot_val(mask_set) && !pgprot_val(mask_clr) && !force_split;
-	printk(KERN_INFO "feature_support_flag: %d\n", feature_support_flag);
+	//printk(KERN_INFO "feature_support_flag: %d\n", feature_support_flag);
 	if (feature_support_flag)
 	//if (!pgprot_val(mask_set) && !pgprot_val(mask_clr) && !force_split)
 		return 0;
@@ -2195,7 +2202,7 @@ static int change_page_attr_set_clr(unsigned long *addr, int numpages,
 	/* Has caller explicitly disabled alias checking? */
 	if (in_flag & CPA_NO_CHECK_ALIAS)
 		checkalias = 0;
-	printk(KERN_INFO "Enter into real page attribute change\n");
+	//printk(KERN_INFO "Enter into real page attribute change\n");
 	ret = __change_page_attr_set_clr(&cpa, checkalias);
 
 	/*
@@ -2450,11 +2457,11 @@ int set_memory_wc(unsigned long addr, int numpages)
 		_PAGE_CACHE_MODE_WC, NULL);
 	if (ret)
 		return ret;
-	printk(KERN_INFO "Reserve at set_memory_wc passed\n");
+	//printk(KERN_INFO "Reserve at set_memory_wc passed\n");
 	ret = _set_memory_wc(addr, numpages);
 	if (ret)
 		free_memtype(__pa(addr), __pa(addr) + numpages * PAGE_SIZE);
-	printk(KERN_INFO "Freed by set_memory_wc occurred\n");
+	//printk(KERN_INFO "Freed by set_memory_wc occurred\n");
 	return ret;
 }
 EXPORT_SYMBOL(set_memory_wc);
@@ -2496,7 +2503,7 @@ int set_memory_wb(unsigned long addr, int numpages)
 	ret = _set_memory_wb(addr, numpages);
 	if (ret)
 		return ret;
-	printk(KERN_INFO "Freed by set_memory_wb occurred\n");
+	//printk(KERN_INFO "Freed by set_memory_wb occurred\n");
 	free_memtype(__pa(addr), __pa(addr) + numpages * PAGE_SIZE);
 	return 0;
 }
@@ -2906,3 +2913,5 @@ out:
 #ifdef CONFIG_CPA_DEBUG
 #include "pageattr-test.c"
 #endif
+
+/*code to make set_memory_(uc|wc|wt|wb) valid as a system call */
