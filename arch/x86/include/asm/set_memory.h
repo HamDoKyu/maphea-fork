@@ -58,6 +58,13 @@ int set_pages_array_wc(struct page **pages, int addrinarray);
 int set_pages_array_wt(struct page **pages, int addrinarray);
 int set_pages_array_wb(struct page **pages, int addrinarray);
 
+int set_memory_uc_PAT_user(unsigned long addr, int numpages);
+int set_memory_wc_PAT_user(unsigned long addr, int numpages);
+int set_memory_wt_PAT_user(unsigned long addr, int numpages);
+int set_memory_wb_PAT_user(unsigned long addr, int numpages); 
+
+
+
 int change_page_attr_set_clr_maphea(unsigned long *addr, int numpages,
                                     pgprot_t mask_set, pgprot_t mask_clr,
                                     struct page **pages);
