@@ -63,7 +63,7 @@ int set_memory_wc_PAT_user(unsigned long addr, int numpages);
 int set_memory_wt_PAT_user(unsigned long addr, int numpages);
 int set_memory_wb_PAT_user(unsigned long addr, int numpages); 
 
-
+int cpa_base_dk(unsigned long addr, unsigned long numpages, unsigned long PAT_option);
 
 int change_page_attr_set_clr_maphea(unsigned long *addr, int numpages,
                                     pgprot_t mask_set, pgprot_t mask_clr,

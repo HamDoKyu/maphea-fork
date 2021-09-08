@@ -1105,8 +1105,10 @@ access_error(unsigned long error_code, struct vm_area_struct *vma)
 	 * always an unconditional error and can never result in
 	 * a follow-up action to resolve the fault, like a COW.
 	 */
-	if (error_code & X86_PF_PK)
+	if (error_code & X86_PF_PK){
+		//printk(KERN_INFO "RW blocked by protection key\n");
 		return 1;
+	}
 
 	/*
 	 * Make sure to check the VMA so that we do not perform
@@ -1114,23 +1116,32 @@ access_error(unsigned long error_code, struct vm_area_struct *vma)
 	 * page.
 	 */
 	if (!arch_vma_access_permitted(vma, (error_code & X86_PF_WRITE),
-				       (error_code & X86_PF_INSTR), foreign))
-		return 1;
+				       (error_code & X86_PF_INSTR), foreign)){
+						   //printk(KERN_INFO "arch vma access not permitted\n");
+						   return 1;
+					   }
 
 	if (error_code & X86_PF_WRITE) {
 		/* write, present and write, not present: */
-		if (unlikely(!(vma->vm_flags & VM_WRITE)))
+		if (unlikely(!(vma->vm_flags & VM_WRITE))){
+			//printk("case write+present/not present\n");
 			return 1;
+		}
 		return 0;
 	}
 
 	/* read, present: */
-	if (unlikely(error_code & X86_PF_PROT))
-		return 1;
+	if (unlikely(error_code & X86_PF_PROT)){
+		//printk("protection fault\n");
+		//return 1;
+		return 0;
+	}
 
 	/* read, not present: */
-	if (unlikely(!(vma->vm_flags & (VM_READ | VM_EXEC | VM_WRITE))))
+	if (unlikely(!(vma->vm_flags & (VM_READ | VM_EXEC | VM_WRITE)))){
+		//printk("read+not present\n");
 		return 1;
+	}
 
 	return 0;
 }
@@ -1256,8 +1267,9 @@ void do_user_addr_fault(struct pt_regs *regs,
 	 * pages in the user address space.
 	 */
 	if (unlikely(smap_violation(hw_error_code, regs))) {
-		bad_area_nosemaphore(regs, hw_error_code, address);
-		return;
+		//printk("smap violation\n");
+		//bad_area_nosemaphore(regs, hw_error_code, address);
+		//return;
 	}
 
 	/*
@@ -1265,6 +1277,7 @@ void do_user_addr_fault(struct pt_regs *regs,
 	 * in a region with pagefaults disabled then we must not take the fault
 	 */
 	if (unlikely(faulthandler_disabled() || !mm)) {
+		//printk("Interrupt or other context\n");
 		bad_area_nosemaphore(regs, hw_error_code, address);
 		return;
 	}
@@ -1349,12 +1362,14 @@ void do_user_addr_fault(struct pt_regs *regs,
 	 *    in sw_error_code.
 	 */
 	if (unlikely(!down_read_trylock(&mm->mmap_sem))) {
+		//printk("Failed to acquire mmap_sem\n");
 		if (!(sw_error_code & X86_PF_USER) &&
 		    !search_exception_tables(regs->ip)) {
 			/*
 			 * Fault from code in kernel from
 			 * which we do not expect faults.
 			 */
+			//printk("Can't find in exception table\n");
 			bad_area_nosemaphore(regs, sw_error_code, address);
 			return;
 		}
@@ -1371,12 +1386,14 @@ retry:
 
 	vma = find_vma(mm, address);
 	if (unlikely(!vma)) {
+		//printk("VMA doesn't exist\n");
 		bad_area(regs, sw_error_code, address);
 		return;
 	}
 	if (likely(vma->vm_start <= address))
 		goto good_area;
 	if (unlikely(!(vma->vm_flags & VM_GROWSDOWN))) {
+		//printk("VM grows down\n");
 		bad_area(regs, sw_error_code, address);
 		return;
 	}
@@ -1388,11 +1405,13 @@ retry:
 		 * 32 pointers and then decrements %sp by 65535.)
 		 */
 		if (unlikely(address + 65536 + 32 * sizeof(unsigned long) < regs->sp)) {
+			//printk("Accessing the stack below sp\n");
 			bad_area(regs, sw_error_code, address);
 			return;
 		}
 	}
 	if (unlikely(expand_stack(vma, address))) {
+		//printk("expand stack\n");
 		bad_area(regs, sw_error_code, address);
 		return;
 	}
@@ -1403,6 +1422,7 @@ retry:
 	 */
 good_area:
 	if (unlikely(access_error(sw_error_code, vma))) {
+		//printk("We can't handle fault..\n");
 		bad_area_access_error(regs, sw_error_code, address, vma);
 		return;
 	}
@@ -1430,6 +1450,7 @@ good_area:
 	 */
 	if (unlikely(fault & VM_FAULT_RETRY)) {
 		/* Retry at most once */
+		//printk("retry the page fault once\n");
 		if (flags & FAULT_FLAG_ALLOW_RETRY) {
 			flags &= ~FAULT_FLAG_ALLOW_RETRY;
 			flags |= FAULT_FLAG_TRIED;
@@ -1483,10 +1504,14 @@ __do_page_fault(struct pt_regs *regs, unsigned long hw_error_code,
 		return;
 
 	/* Was the fault on kernel-controlled part of the address space? */
-	if (unlikely(fault_in_kernel_space(address)))
+	if (unlikely(fault_in_kernel_space(address))){
+		//printk(KERN_INFO "kernel addreess %lx fault\n", address);
 		do_kern_addr_fault(regs, hw_error_code, address);
-	else
+	}
+	else{
+		//printk(KERN_INFO "user address fault\n");
 		do_user_addr_fault(regs, hw_error_code, address);
+	}
 }
 NOKPROBE_SYMBOL(__do_page_fault);
 

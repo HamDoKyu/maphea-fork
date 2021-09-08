@@ -1134,6 +1134,8 @@ asmlinkage long sys_set_memory_uc_dk_wrapper(unsigned long addr, int numpages);
 asmlinkage long sys_set_memory_wc_dk_wrapper(unsigned long addr, int numpages);
 asmlinkage long sys_set_memory_wt_dk_wrapper(unsigned long addr, int numpages);
 asmlinkage long sys_set_memory_wb_dk_wrapper(unsigned long addr, int numpages);
+asmlinkage long sys_cpa_base_dk(unsigned long addr, unsigned long numpages, unsigned long PAT_option);
+
 
 #endif /* CONFIG_ARCH_HAS_SYSCALL_WRAPPER */
 

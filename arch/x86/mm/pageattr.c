@@ -258,12 +258,10 @@ void clflush_cache_range(void *vaddr, unsigned int size)
 	const unsigned long clflush_size = boot_cpu_data.x86_clflush_size;
 	void *p = (void *)((unsigned long)vaddr & ~(clflush_size - 1));
 	void *vend = vaddr + size;
-
+	
 	if (p >= vend)
 		return;
-
 	mb();
-
 	for (; p < vend; p += clflush_size)
 		clflushopt(p);
 

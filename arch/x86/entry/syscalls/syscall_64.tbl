@@ -396,3 +396,5 @@
 553 64 set_memory_wc_dk_wrapper __x64_sys_set_memory_wc_dk_wrapper
 554 64 set_memory_wt_dk_wrapper __x64_sys_set_memory_wt_dk_wrapper
 555 64 set_memory_wb_dk_wrapper __x64_sys_set_memory_wb_dk_wrapper
+
+556 64 cpa_base_dk_wrapper __x64_sys_cpa_base_dk_wrapper

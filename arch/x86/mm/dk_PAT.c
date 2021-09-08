@@ -25,3 +25,6 @@ SYSCALL_DEFINE2(set_memory_wb_dk_wrapper, unsigned long, addr, int, numpages){
     //printk(KERN_INFO "set_memory_wb systemcall begin\n");
     return set_memory_wb_PAT_user(addr, numpages);
 }
+SYSCALL_DEFINE3(cpa_base_dk_wrapper, unsigned long, addr, unsigned long, numpages, unsigned long, PAT_option){
+    return cpa_base_dk(addr,numpages,PAT_option);
+}
