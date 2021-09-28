@@ -1825,8 +1825,24 @@ pmd_t *pmd_to_be_change(unsigned long address)
 	p4d_t *p4d;
 	pud_t *pud;
 	pmd_t *pmd;
-
-	pgd=pgd_offset(current->mm, address);
+	struct mm_struct *mm;
+	mm = current->mm;
+	pgd = pgd_offset(mm, address);
+	p4d = p4d_alloc(mm, pgd, address);
+	if (unlikely(!p4d)){
+		return NULL;
+	}
+	pud = pud_alloc(mm, p4d, address);
+	if (unlikely(!pud)){
+		return NULL;
+	}
+	pmd = pmd_alloc(mm, pud, address);
+	if (unlikely(!pmd)){
+		return NULL;
+	}
+	return pmd;
+	/*
+	code like handle_mm_fault
 	if(pgd_none(*pgd)){
 		//printk(KERN_INFO "address %lx's pgd doesn't exist\n", address);
 		return NULL;
@@ -1846,7 +1862,7 @@ pmd_t *pmd_to_be_change(unsigned long address)
 		//printk(KERN_INFO "address %lx's pmd doesn't exist\n", address);
 		return NULL;
 	}
-	return pmd;
+	return pmd;*/
 	//return pte_offset_kernel(pmd, address);
 }
 //dokyu: This is obtained by sudo rmdsr 0x277
@@ -1897,12 +1913,13 @@ static void clflush_cache_range_opt_dk(void *vaddr, unsigned int size)
 	//printk("every cache line is flushed\n");
 }
 void cpa_in_pmd(pmd_t* pmd, struct eff_cpa_data cpa_info, unsigned long PAT_option){
-	pmdval_t pmd_address=pte_offset_kernel(pmd, 0);
-	
-	//printk("pmd address: %lx", pmd_address);
-	//printk("finding address: %lx\n", cpa_info.addr);
-	
-	//printk("pmd address: %lx", pmd_address);
+	pmdval_t pmd_address;
+	if(likely(pmd)){
+		pmd_address=pte_offset_kernel(pmd, 0);
+	}
+	else{
+		printk("still no pmd\n");
+	}
 	pteval_t* pte_array=(pteval_t* ) pmd_address;
 	unsigned long and_mask=0x98;
 	and_mask=~and_mask;
@@ -1911,40 +1928,36 @@ void cpa_in_pmd(pmd_t* pmd, struct eff_cpa_data cpa_info, unsigned long PAT_opti
 	unsigned long end_in_pmd=cpa_info.end_in_dir;
 	//mb();
 	for(i=start_in_pmd; i<=end_in_pmd; i++){
-		//clflush should occur before setting..
 		pteval_t pte_val_i=pte_array[i];
 		unsigned long current_page_addr=((cpa_info.addr)&(~(PMD_OFFSET_SIZE-1)))+i*PAGE_SIZE_4KB;
 		//printk("current page address: %lx\n", current_page_addr);
-		if (pte_val_i & _PAGE_PRESENT){
-			//printk("page present with its pte: %lx\n", pte_val_i);
-			/*clflush_cache_range_opt_dk((void *)current_page_addr, PAGE_SIZE_4KB);
-			//printk("flushed the cache line\n");*/
+		unsigned long pte_exist=pte_val_i & ~(_PAGE_KNL_ERRATUM_MASK);
+		unsigned long pte_in_DRAM=pte_val_i & (_PAGE_PRESENT | _PAGE_PROTNONE);
+		if(!pte_exist){
+			//printk("page %lx not exists, flags: %x, %x\n", current_page_addr, FAULT_FLAG_ALLOW_RETRY, FAULT_FLAG_KILLABLE);
+			//struct vm_area_struct* vma = find_vma(current->mm, current_page_addr);
+			//handle_mm_fault(vma, current_page_addr, FAULT_FLAG_ALLOW_RETRY | FAULT_FLAG_KILLABLE);
+			/*printk("The value of pte: %lx, pte doesn't exist.., populate mm\n", pte_val_i);
+			int ret_val=__mm_populate(current_page_addr, PAGE_SIZE_4KB, 0);
+			if(ret_val<0){
+				printk("mm_populate value is %lx\n", ret_val);
+			}*/
+			//mm_populate(current_page_addr, PAGE_SIZE_4KB);
 		}
-		else{
-			//printk("No page present\n");
-			struct vm_area_struct* vma = find_vma(current->mm, current_page_addr);
-			//printk("Found vma\n");
-			handle_mm_fault(vma, current_page_addr, FAULT_FLAG_ALLOW_RETRY | FAULT_FLAG_KILLABLE | FAULT_FLAG_WRITE);
-			//printk("Handle mm fault\n");
+		else if(!pte_in_DRAM){
+			//printk("The value of pte: %lx, pte exits but not in DRAM, populate mm\n", pte_val_i);
+			//mm_populate(current_page_addr, PAGE_SIZE_4KB);
+			/*if(ret_val<0){
+				printk("mm_populate value is %lx\n", ret_val);
+			}*/
 		}
-		//printk("clflush or fault end\n");
-		//printk("Previous pte value is %lx\n", pte_val_i);
 		pte_array[i]=(pte_val_i&and_mask)+PAT_option;
-		//printk("Success for masking to %lx\n", pte_array[i]);
 	}
 	//mb();
 }
 
 int cpa_base_dk(unsigned long addr, unsigned long numpages, unsigned long PAT_option){
-	//0. flush every cacheline
-	/*printk(KERN_INFO "check the access begin\n");
-	access_ok(VERIFY_READ, addr, numpages*PAGE_SIZE_4KB);
-	printk(KERN_INFO "check the access end\n");*/
-	/*printk(KERN_INFO "clflush begins\n");
-	//dump_stack();
-	clflush_cache_range(addr, numpages*PAGE_SIZE_4KB);
-	printk(KERN_INFO "clflush is done\n");*/
-	// if addr is not aligned, return -1;
+	//printk("cpa base begins\n");
 	struct eff_cpa_data cpa_info;
 	cpa_info.addr=addr;
 	cpa_info.numpages=numpages;
@@ -1952,9 +1965,6 @@ int cpa_base_dk(unsigned long addr, unsigned long numpages, unsigned long PAT_op
 	if((addr&(PAGE_SIZE_4KB-1))!=0){
 		//printk(KERN_INFO "Invalid alignment\n");
 		return -1;
-	}
-	else{
-		//printk(KERN_INFO "alignment check is done\n");
 	}
 	long page_number = (addr >> PAGE_BIT_4KB);
 	cpa_info.start_in_dir = page_number - (((page_number) >> BITS_OF_PTE_FOR_ONE_PAGE) << BITS_OF_PTE_FOR_ONE_PAGE);
@@ -1966,80 +1976,21 @@ int cpa_base_dk(unsigned long addr, unsigned long numpages, unsigned long PAT_op
 		//printk(KERN_INFO "Invalid PAT_option\n");
 		return -1;
 	}
-	else{
-		//printk(KERN_INFO "PAT option check is done\n");
-	}
-
+	//clflush_cache_range_opt_dk(addr, numpages*PAGE_SIZE_4KB);
+	/*if(populate){
+		mm_populate(cpa_info.addr, numpages*PAGE_SIZE_4KB);
+	}*/
 	while(cpa_info.numpages>0){
-		//printk("addr: %lx\n", cpa_info.addr);
-		//printk("numpages left: %lx\n", cpa_info.numpages);
-		//printk("start: %lx, end: %lx\n", cpa_info.start_in_dir, cpa_info.end_in_dir);
-		//1. find the pmd
-		//printk("Find pmd begin\n");
 		pmd_t* pmd=pmd_to_be_change(cpa_info.addr);
-		//printk("Find pmd done\n");
-		//2. change attribute
-		//printk("cpa begins\n");
-		cpa_in_pmd(pmd,cpa_info, PAT_option);
-		//printk("cpa done\n");
-		//3. update TLB
+		cpa_in_pmd(pmd,cpa_info,PAT_option);
 		cpa_info.addr=cpa_info.addr+((cpa_info.end_in_dir-cpa_info.start_in_dir+1)<<PAGE_BIT_4KB);
 		cpa_info.numpages-=(cpa_info.end_in_dir-cpa_info.start_in_dir+1);
 		cpa_info.start_in_dir=0;
 		cpa_info.end_in_dir=(cpa_info.numpages<NUMBER_OF_PTE_IN_ONE_PAGE-1)? cpa_info.numpages-1: (NUMBER_OF_PTE_IN_ONE_PAGE-1);
 	}
-	//update TLB
-	//printk("flush tlb begins\n");
 	flush_tlb_mm_range(current->mm, addr, addr+numpages*PAGE_SIZE_4KB, PAGE_BIT_4KB, false);
-	//printk("flush tlb ends\n");
-	//flush_tlb_range(current->mm->mmap, addr, addr+numpages*PAGE_SIZE_4KB);
 	return 0;
 }
 EXPORT_SYMBOL(cpa_base_dk);
 
 
-
-
-
-//functionality check
-
-/*
-int pmd_print(unsigned long addr, int numpages){
-	// if addr is not aligned, return -1;
-
-	struct cpa_data cpa_info;
-	cpa_info.vaddr=addr;
-	cpa_info.numpages=numpages;
-
-	if(addr&(PAGE_SIZE_4KB-1)!=0){
-		return -1;
-	}
-	long page_number = (addr >> PAGE_BIT_4KB);
-	long base_offset_pmd = page_number - (((page_number) >> BITS_OF_PTE_FOR_ONE_PAGE) << BITS_OF_PTE_FOR_ONE_PAGE);
-	int first=1;
-
-	while(cpa_info.numpages>0){
-		pmd_t* pmd=pmd_to_be_changed(cpa_info.vaddr);
-		printk(KERN_INFO "Address %lx 's pmd: %lx\n", addr, pmd_val(*pmd));
-		//1. find the pmd
-		//2. flush every cacheline
-		//3. change attribute
-		//4. update TLB
-
-		if(cpa_info.numpages< NUMBER_OF_PTE_IN_ONE_PAGE-base_offset_pmd){
-			cpa_info.numpages=0;
-		}
-		else{
-			
-		}
-		addr+=PAGE_SIZE_4KB;
-		base_offset_pmd=(base_offset_pmd+1)%NUMBER_OF_PTE_IN_ONE_PAGE;
-		numpages--;
-	}
-	return 0;
-	//1. flush every cache range
-
-	//2. 
-
-
-}*/

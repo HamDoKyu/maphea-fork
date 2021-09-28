@@ -1132,9 +1132,10 @@ access_error(unsigned long error_code, struct vm_area_struct *vma)
 
 	/* read, present: */
 	if (unlikely(error_code & X86_PF_PROT)){
-		//printk("protection fault\n");
-		//return 1;
-		return 0;
+		//If error, restore return 0..
+		printk("protection fault\n");
+		return 1;
+		//return 0;
 	}
 
 	/* read, not present: */
@@ -1267,9 +1268,10 @@ void do_user_addr_fault(struct pt_regs *regs,
 	 * pages in the user address space.
 	 */
 	if (unlikely(smap_violation(hw_error_code, regs))) {
+		//Erase this if error....
 		//printk("smap violation\n");
-		//bad_area_nosemaphore(regs, hw_error_code, address);
-		//return;
+		bad_area_nosemaphore(regs, hw_error_code, address);
+		return;
 	}
 
 	/*
